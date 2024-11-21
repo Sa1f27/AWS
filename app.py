@@ -31,17 +31,24 @@ def authenticate_user(username, password):
     except cognito_client.exceptions.NotAuthorizedException:
         return None
 
-def register_user(username, password):
+def register_user(username, password, email):
     """Register a new user using Cognito."""
     try:
         cognito_client.sign_up(
             ClientId=CLIENT_ID,
             Username=username,
             Password=password,
+            UserAttributes=[
+                {
+                    'Name': 'email',
+                    'Value': email
+                }
+            ]
         )
         return True
     except cognito_client.exceptions.UsernameExistsException:
         return False
+
 
 # Streamlit UI
 def main():
@@ -54,12 +61,32 @@ def main():
         st.subheader("Create a New Account")
         new_username = st.text_input("Username")
         new_password = st.text_input("Password", type='password')
+        new_email = st.text_input("Email")
 
         if st.button("Register"):
-            if register_user(new_username, new_password):
-                st.success("Registration successful! You can log in now.")
+            if new_email:
+                if register_user(new_username, new_password, new_email):
+                    st.success("Registration successful! You can log in now.")
+                else:
+                    st.error("User already exists or registration failed.")
             else:
-                st.error("User already exists or registration failed.")
+                st.error("Please enter a valid email address.")
+
+    elif choice == "Register":
+        st.subheader("Create a New Account")
+        new_username = st.text_input("Username")
+        new_password = st.text_input("Password", type='password')
+        new_email = st.text_input("Email")
+
+        if st.button("Register"):
+            if new_email:
+                if register_user(new_username, new_password, new_email):
+                    st.success("Registration successful! You can log in now.")
+                else:
+                    st.error("User already exists or registration failed.")
+            else:
+                st.error("Please enter a valid email address.")
+
     
     elif choice == "Login":
         st.subheader("Login to Your Account")
