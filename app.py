@@ -1,7 +1,6 @@
 import os
 import streamlit as st
 import boto3
-from jose import jwt
 from datetime import datetime
 import uuid
 
@@ -45,7 +44,6 @@ def authenticate_user(username, password):
 def register_user(username, password, email, user_details):
     """Register a new user using Cognito and save additional details to DynamoDB."""
     try:
-        # Register user in Cognito
         cognito_client.sign_up(
             ClientId=CLIENT_ID,
             Username=username,
@@ -119,14 +117,51 @@ def get_medical_records(username):
         st.error(f"Error fetching medical records: {str(e)}")
         return []
 
-def main():
-    st.title("MedTech App")
+def show_dashboard(username):
+    """Display user dashboard with medical information"""
+    st.sidebar.button("Logout", on_click=lambda: setattr(st.session_state, 'authenticated', False))
     
+    user_details = get_user_details(username)
+    if user_details:
+        st.header(f"Welcome, {user_details['full_name']}!")
+        
+        with st.expander("Personal Information", expanded=True):
+            st.write("**Email:**", user_details['email'])
+            st.write("**Phone:**", user_details['phone'])
+            st.write("**Date of Birth:**", user_details['date_of_birth'])
+            st.write("**Address:**", user_details['address'])
+            st.write("**Emergency Contact:**", user_details['emergency_contact'])
+        
+        st.subheader("Medical Records")
+        
+        with st.expander("Add New Medical Record"):
+            record_type = st.selectbox("Record Type", 
+                ["Consultation", "Prescription", "Lab Test", "Vaccination", "Surgery", "Other"])
+            description = st.text_area("Description")
+            if st.button("Save Record"):
+                if save_medical_record(username, record_type, description):
+                    st.success("Medical record saved successfully!")
+                    st.experimental_rerun()
+        
+        records = get_medical_records(username)
+        if records:
+            for record in records:
+                with st.expander(f"{record['record_type']} - {record['timestamp'][:10]}"):
+                    st.write("**Type:**", record['record_type'])
+                    st.write("**Description:**", record['description'])
+                    st.write("**Date:**", record['timestamp'])
+        else:
+            st.info("No medical records found.")
+
+def main():
+    st.set_page_config(page_title="MedTech App", page_icon="🩺", layout="centered")
+    st.title("MedTech Application")
+
     if 'authenticated' not in st.session_state:
         st.session_state.authenticated = False
-    
+
     menu = ["Login", "Register"]
-    choice = st.sidebar.selectbox("Menu", menu)
+    choice = st.sidebar.radio("Menu", menu)
 
     if choice == "Register":
         st.subheader("Create a New Account")
@@ -155,7 +190,7 @@ def main():
                     }
                     
                     if register_user(new_username, new_password, new_email, user_details):
-                        st.success("Registration successful! Please check your email for the verification code.")
+                        st.success("Registration successful! Please verify your email to complete registration.")
                         verification_code = st.text_input("Enter verification code:")
                         if st.button("Verify Email"):
                             try:
@@ -200,55 +235,6 @@ def main():
 
     if st.session_state.authenticated:
         show_dashboard(st.session_state.username)
-
-def show_dashboard(username):
-    """Display user dashboard with medical information"""
-    st.sidebar.button("Logout", on_click=lambda: setattr(st.session_state, 'authenticated', False))
-    
-    # Fetch and display user details
-    user_details = get_user_details(username)
-    if user_details:
-        st.header(f"Welcome, {user_details['full_name']}!")
-        
-        # Personal Information Section
-        with st.expander("Personal Information", expanded=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("**Email:**", user_details['email'])
-                st.write("**Phone:**", user_details['phone'])
-                st.write("**Date of Birth:**", user_details['date_of_birth'])
-            with col2:
-                st.write("**Address:**", user_details['address'])
-                st.write("**Emergency Contact:**", user_details['emergency_contact'])
-        
-        # Medical Records Section
-        st.subheader("Medical Records")
-        
-        # Add new medical record
-        with st.expander("Add New Medical Record"):
-            record_type = st.selectbox("Record Type", 
-                ["Consultation", "Prescription", "Lab Test", "Vaccination", "Surgery", "Other"])
-            description = st.text_area("Description")
-            if st.button("Save Record"):
-                if save_medical_record(username, record_type, description):
-                    st.success("Medical record saved successfully!")
-                    st.experimental_rerun()
-        
-        # Display existing medical records
-        records = get_medical_records(username)
-        if records:
-            for record in records:
-                with st.expander(f"{record['record_type']} - {record['timestamp'][:10]}"):
-                    st.write("**Type:**", record['record_type'])
-                    st.write("**Description:**", record['description'])
-                    st.write("**Date:**", record['timestamp'])
-        else:
-            st.info("No medical records found.")
-        
-        # Medical Conditions Section
-        if user_details.get('medical_conditions'):
-            with st.expander("Medical Conditions"):
-                st.write(user_details['medical_conditions'])
 
 if __name__ == "__main__":
     main()
