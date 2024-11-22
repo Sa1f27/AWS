@@ -8,14 +8,25 @@ import hmac
 import hashlib
 import base64
 
-# Use environment variables for AWS configuration
+# Initialize session state variables
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'page' not in st.session_state:
+    st.session_state.page = 'login'
+if 'username' not in st.session_state:
+    st.session_state.username = None
+if 'verification_needed' not in st.session_state:
+    st.session_state.verification_needed = False
+
+# AWS Configuration
 AWS_REGION = st.secrets["AWS_REGION"]
 USER_POOL_ID = st.secrets["USER_POOL_ID"]
 CLIENT_ID = st.secrets["CLIENT_ID"]
+CLIENT_SECRET = st.secrets["CLIENT_SECRET"]
 AWS_ACCESS_KEY = st.secrets["AWS_ACCESS_KEY"]
 AWS_SECRET_KEY = st.secrets["AWS_SECRET_KEY"]
 
-# Initialize Boto3 clients using these variables
+# Initialize AWS clients
 cognito_client = boto3.client(
     'cognito-idp',
     region_name=AWS_REGION,
@@ -38,14 +49,16 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS
+# Custom CSS with improved styling
 st.markdown("""
     <style>
-        .stButton button {
+        .stButton > button {
             width: 100%;
             background-color: #0083B8;
             color: white;
             border-radius: 5px;
+            padding: 0.5rem 1rem;
+            margin: 0.5rem 0;
         }
         .stTextInput > div > div > input {
             border-radius: 5px;
@@ -55,57 +68,59 @@ st.markdown("""
             border-radius: 10px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             background-color: white;
+            margin: 1rem 0;
         }
         .css-1d391kg {
-            padding: 1rem 1rem 2rem;
+            padding: 1rem;
         }
-        .st-emotion-cache-1gulkj5 {
-            margin-bottom: 2rem;
+        .stAlert {
+            margin: 1rem 0;
         }
     </style>
 """, unsafe_allow_html=True)
 
-def generate_secret_hash(username, client_id, client_secret):
-    """
-    Generate SECRET_HASH using HMACSHA256(username + client_id, client_secret)
-    """
-    message = username + client_id
-    secret_hash = hmac.new(
-        key=bytes(client_secret, 'utf-8'),
+def generate_secret_hash(username):
+    """Generate SECRET_HASH for Cognito authentication"""
+    message = username + CLIENT_ID
+    dig = hmac.new(
+        key=bytes(CLIENT_SECRET, 'utf-8'),
         msg=bytes(message, 'utf-8'),
         digestmod=hashlib.sha256
     ).digest()
-    return base64.b64encode(secret_hash).decode('utf-8')
-    
+    return base64.b64encode(dig).decode()
+
 def authenticate_user(username, password):
-    """Authenticate user with Cognito"""
+    """Authenticate user with improved error handling"""
     try:
+        secret_hash = generate_secret_hash(username)
         response = cognito_client.initiate_auth(
             ClientId=CLIENT_ID,
             AuthFlow='USER_PASSWORD_AUTH',
             AuthParameters={
                 'USERNAME': username,
-                'PASSWORD': password
+                'PASSWORD': password,
+                'SECRET_HASH': secret_hash
             }
         )
-        return response['AuthenticationResult']['AccessToken']
+        return True, response['AuthenticationResult']['AccessToken']
     except cognito_client.exceptions.UserNotConfirmedException:
-        return 'UserNotConfirmed'
+        return False, 'UserNotConfirmed'
+    except cognito_client.exceptions.NotAuthorizedException:
+        return False, 'InvalidCredentials'
     except Exception as e:
-        st.error(f"Authentication error: {str(e)}")
-        return None
+        return False, str(e)
 
 def register_user(username, password, email, user_details):
-    """Register new user in Cognito and DynamoDB"""
+    """Register user with improved error handling"""
     try:
-        secret_hash = generate_secret_hash(username, CLIENT_ID, st.secrets["CLIENT_SECRET"])  # Generate SECRET_HASH
-
+        secret_hash = generate_secret_hash(username)
+        
         # Register in Cognito
         cognito_client.sign_up(
             ClientId=CLIENT_ID,
             Username=username,
             Password=password,
-            SecretHash=secret_hash,  # Add SECRET_HASH
+            SecretHash=secret_hash,
             UserAttributes=[
                 {'Name': 'email', 'Value': email}
             ]
@@ -117,111 +132,78 @@ def register_user(username, password, email, user_details):
             Item={
                 'username': username,
                 'email': email,
-                'full_name': user_details['full_name'],
-                'phone': user_details['phone'],
-                'date_of_birth': user_details['dob'],
-                'blood_group': user_details['blood_group'],
-                'address': user_details['address'],
-                'emergency_contact': user_details['emergency_contact'],
-                'medical_conditions': user_details['medical_conditions'],
+                **user_details,
                 'created_at': datetime.now().isoformat()
             }
         )
-        return True
+        return True, None
+    except cognito_client.exceptions.UsernameExistsException:
+        return False, "Username already exists"
     except Exception as e:
-        st.error(f"Registration error: {str(e)}")
-        return False
+        return False, str(e)
 
 def verify_user(username, code):
-    """Verify user email with confirmation code"""
+    """Verify user with improved error handling"""
     try:
+        secret_hash = generate_secret_hash(username)
         cognito_client.confirm_sign_up(
             ClientId=CLIENT_ID,
             Username=username,
-            ConfirmationCode=code
+            ConfirmationCode=code,
+            SecretHash=secret_hash
         )
-        return True
+        return True, None
+    except cognito_client.exceptions.CodeMismatchException:
+        return False, "Invalid verification code"
     except Exception as e:
-        st.error(f"Verification error: {str(e)}")
-        return False
-
-def save_medical_record(username, record_data):
-    """Save medical record to DynamoDB"""
-    table = dynamodb.Table('MedicalRecords')
-    try:
-        record_id = str(uuid.uuid4())
-        table.put_item(
-            Item={
-                'record_id': record_id,
-                'username': username,
-                **record_data,
-                'created_at': datetime.now().isoformat()
-            }
-        )
-        return True
-    except Exception as e:
-        st.error(f"Error saving record: {str(e)}")
-        return False
-
-def get_user_details(username):
-    """Get user details from DynamoDB"""
-    table = dynamodb.Table('UserDetails')
-    try:
-        response = table.get_item(Key={'username': username})
-        return response.get('Item')
-    except Exception as e:
-        st.error(f"Error fetching user details: {str(e)}")
-        return None
-
-def get_medical_records(username):
-    """Get user's medical records from DynamoDB"""
-    table = dynamodb.Table('MedicalRecords')
-    try:
-        response = table.query(
-            KeyConditionExpression='username = :username',
-            ExpressionAttributeValues={':username': username}
-        )
-        return response.get('Items', [])
-    except Exception as e:
-        st.error(f"Error fetching records: {str(e)}")
-        return []
+        return False, str(e)
 
 def login_page():
-    """Display login page"""
+    """Improved login page with better state management"""
     st.title("🏥 MedTech Pro")
     
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
-        
-        if submitted:
-            if username and password:
-                token = authenticate_user(username, password)
-                if token == 'UserNotConfirmed':
-                    st.warning("Please verify your email first.")
-                    verification_code = st.text_input("Verification Code")
-                    if st.button("Verify Email"):
-                        if verify_user(username, verification_code):
-                            st.success("Email verified! Please login again.")
-                            time.sleep(2)
-                            st.session_state.page = 'login'  # Update page to login after verification
-                            st.session_state.clear()  # Clear session state to reset app
-                elif token:
-                    st.session_state.token = token
-                    st.session_state.username = username
+    if st.session_state.verification_needed:
+        verification_code = st.text_input("Verification Code")
+        if st.button("Verify Email"):
+            success, error = verify_user(st.session_state.username, verification_code)
+            if success:
+                st.success("Email verified! Please login.")
+                st.session_state.verification_needed = False
+                st.session_state.username = None
+                time.sleep(2)
+                st.rerun()
+            else:
+                st.error(f"Verification failed: {error}")
+    else:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Login")
+            
+            if submitted and username and password:
+                success, result = authenticate_user(username, password)
+                if success:
                     st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.session_state.token = result
+                    st.session_state.page = "dashboard"
                     st.success("Login successful!")
                     time.sleep(1)
-                    st.session_state.page = "dashboard"  # Redirect to dashboard after successful login
-                    st.session_state.clear()  # Clear session state to reset app
+                    st.rerun()
+                elif result == 'UserNotConfirmed':
+                    st.warning("Please verify your email first.")
+                    st.session_state.verification_needed = True
+                    st.session_state.username = username
+                    st.rerun()
                 else:
                     st.error("Invalid credentials")
-            else:
-                st.error("Please fill in all fields")
+
+        if st.button("Create New Account"):
+            st.session_state.page = "registration"
+            st.rerun()
 
 def registration_page():
-    """Display registration page"""
+    """Improved registration page with better validation"""
     st.title("🏥 Create Account")
     
     with st.form("registration_form"):
@@ -229,7 +211,8 @@ def registration_page():
         
         with col1:
             username = st.text_input("Username*")
-            password = st.text_input("Password*", type="password")
+            password = st.text_input("Password*", type="password", 
+                help="Must be at least 8 characters with numbers and special characters")
             email = st.text_input("Email*")
             full_name = st.text_input("Full Name*")
             phone = st.text_input("Phone Number*")
@@ -241,7 +224,7 @@ def registration_page():
             address = st.text_area("Address*")
             emergency_contact = st.text_input("Emergency Contact*")
         
-        medical_conditions = st.text_area("Existing Medical Conditions")
+        medical_conditions = st.text_area("Existing Medical Conditions (Optional)")
         
         submitted = st.form_submit_button("Register")
         
@@ -254,43 +237,90 @@ def registration_page():
                     'blood_group': blood_group,
                     'address': address,
                     'emergency_contact': emergency_contact,
-                    'medical_conditions': medical_conditions
+                    'medical_conditions': medical_conditions or "None"
                 }
                 
-                if register_user(username, password, email, user_details):
+                success, error = register_user(username, password, email, user_details)
+                if success:
                     st.success("Registration successful! Please check your email for verification code.")
-                    verification_code = st.text_input("Enter verification code")
-                    if st.button("Verify Email"):
-                        if verify_user(username, verification_code):
-                            st.success("Email verified! You can now login.")
-                            time.sleep(2)
-                            st.session_state.page = "login"  # Update page to login after registration
-                            st.session_state.clear()  # Clear session state to reset app
+                    st.session_state.verification_needed = True
+                    st.session_state.username = username
+                    time.sleep(2)
+                    st.rerun()
+                else:
+                    st.error(f"Registration failed: {error}")
             else:
                 st.error("Please fill in all required fields")
 
+    if st.button("Back to Login"):
+        st.session_state.page = "login"
+        st.rerun()
+
 def dashboard_page():
-    """Display user dashboard"""
+    """Improved dashboard with better data display"""
+    if not st.session_state.authenticated:
+        st.session_state.page = "login"
+        st.rerun()
+        return
+
     user_details = get_user_details(st.session_state.username)
     
     if user_details:
-        st.title(f"Welcome, {user_details['full_name']}")
-        st.subheader("Your Medical Records")
+        st.title(f"Welcome, {user_details['full_name']} 👋")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Personal Information")
+            st.write(f"📧 Email: {user_details['email']}")
+            st.write(f"📱 Phone: {user_details['phone']}")
+            st.write(f"🩸 Blood Group: {user_details['blood_group']}")
+        
+        with col2:
+            st.subheader("Emergency Contact")
+            st.write(f"👤 Contact: {user_details['emergency_contact']}")
+            st.write(f"📍 Address: {user_details['address']}")
+
+        st.subheader("Medical Records")
         records = get_medical_records(st.session_state.username)
         
-        for record in records:
-            st.write(record)
+        if records:
+            for record in records:
+                with st.expander(f"Record from {record['created_at'][:10]}"):
+                    st.write(record)
+        else:
+            st.info("No medical records found")
 
-        # Option to log out
         if st.button("Log Out"):
-            st.session_state.clear()  # Clear session state to reset app
-            st.session_state.page = "login"  # Redirect to login page
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
+
+def get_user_details(username):
+    """Get user details with error handling"""
+    table = dynamodb.Table('UserDetails')
+    try:
+        response = table.get_item(Key={'username': username})
+        return response.get('Item')
+    except Exception as e:
+        st.error(f"Error fetching user details: {str(e)}")
+        return None
+
+def get_medical_records(username):
+    """Get medical records with error handling"""
+    table = dynamodb.Table('MedicalRecords')
+    try:
+        response = table.query(
+            IndexName='username-index',  # Make sure this index exists in DynamoDB
+            KeyConditionExpression='username = :username',
+            ExpressionAttributeValues={':username': username}
+        )
+        return response.get('Items', [])
+    except Exception as e:
+        st.error(f"Error fetching medical records: {str(e)}")
+        return []
 
 def main():
-    """Main function for app flow"""
-    if 'page' not in st.session_state:
-        st.session_state.page = 'login'
-    
+    """Main app flow with improved state management"""
     if st.session_state.page == "login":
         login_page()
     elif st.session_state.page == "registration":
