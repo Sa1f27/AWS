@@ -3,29 +3,67 @@ import streamlit as st
 import boto3
 from datetime import datetime
 import uuid
+import time
 
-# Use environment variables for AWS configuration
-REGION = os.getenv('AWS_REGION')
-USER_POOL_ID = os.getenv('USER_POOL_ID')
-CLIENT_ID = os.getenv('CLIENT_ID')
+# AWS Configuration
+AWS_REGION = "YOUR_REGION"  # e.g., "us-east-1"
+USER_POOL_ID = "YOUR_USER_POOL_ID"
+CLIENT_ID = "YOUR_CLIENT_ID"
+AWS_ACCESS_KEY = "YOUR_ACCESS_KEY"
+AWS_SECRET_KEY = "YOUR_SECRET_KEY"
 
-# Initialize Boto3 clients
+# Initialize AWS clients
 cognito_client = boto3.client(
     'cognito-idp',
-    region_name=REGION,
-    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+    region_name=AWS_REGION,
+    aws_access_key_id=AWS_ACCESS_KEY,
+    aws_secret_access_key=AWS_SECRET_KEY
 )
 
 dynamodb = boto3.resource(
     'dynamodb',
-    region_name=REGION,
-    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+    region_name=AWS_REGION,
+    aws_access_key_id=AWS_ACCESS_KEY,
+    aws_secret_access_key=AWS_SECRET_KEY
 )
 
+# Page configuration
+st.set_page_config(
+    page_title="MedTech Pro",
+    page_icon="🏥",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
+
+# Custom CSS
+st.markdown("""
+    <style>
+        .stButton button {
+            width: 100%;
+            background-color: #0083B8;
+            color: white;
+            border-radius: 5px;
+        }
+        .stTextInput > div > div > input {
+            border-radius: 5px;
+        }
+        .main > div {
+            padding: 2rem;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            background-color: white;
+        }
+        .css-1d391kg {
+            padding: 1rem 1rem 2rem;
+        }
+        .st-emotion-cache-1gulkj5 {
+            margin-bottom: 2rem;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 def authenticate_user(username, password):
-    """Authenticate a user using Cognito."""
+    """Authenticate user with Cognito"""
     try:
         response = cognito_client.initiate_auth(
             ClientId=CLIENT_ID,
@@ -36,26 +74,26 @@ def authenticate_user(username, password):
             }
         )
         return response['AuthenticationResult']['AccessToken']
-    except cognito_client.exceptions.NotAuthorizedException:
-        return None
     except cognito_client.exceptions.UserNotConfirmedException:
         return 'UserNotConfirmed'
+    except Exception as e:
+        st.error(f"Authentication error: {str(e)}")
+        return None
 
 def register_user(username, password, email, user_details):
-    """Register a new user using Cognito and save additional details to DynamoDB."""
+    """Register new user in Cognito and DynamoDB"""
     try:
+        # Register in Cognito
         cognito_client.sign_up(
             ClientId=CLIENT_ID,
             Username=username,
             Password=password,
             UserAttributes=[
-                {'Name': 'email', 'Value': email},
-                {'Name': 'name', 'Value': user_details['full_name']},
-                {'Name': 'custom:phone_number', 'Value': user_details['phone']},
+                {'Name': 'email', 'Value': email}
             ]
         )
         
-        # Save additional user details to DynamoDB
+        # Save to DynamoDB
         table = dynamodb.Table('UserDetails')
         table.put_item(
             Item={
@@ -64,11 +102,11 @@ def register_user(username, password, email, user_details):
                 'full_name': user_details['full_name'],
                 'phone': user_details['phone'],
                 'date_of_birth': user_details['dob'],
+                'blood_group': user_details['blood_group'],
                 'address': user_details['address'],
                 'emergency_contact': user_details['emergency_contact'],
                 'medical_conditions': user_details['medical_conditions'],
-                'created_at': datetime.now().isoformat(),
-                'last_updated': datetime.now().isoformat()
+                'created_at': datetime.now().isoformat()
             }
         )
         return True
@@ -76,36 +114,49 @@ def register_user(username, password, email, user_details):
         st.error(f"Registration error: {str(e)}")
         return False
 
-def save_medical_record(username, record_type, description):
-    """Save a medical record to DynamoDB."""
+def verify_user(username, code):
+    """Verify user email with confirmation code"""
+    try:
+        cognito_client.confirm_sign_up(
+            ClientId=CLIENT_ID,
+            Username=username,
+            ConfirmationCode=code
+        )
+        return True
+    except Exception as e:
+        st.error(f"Verification error: {str(e)}")
+        return False
+
+def save_medical_record(username, record_data):
+    """Save medical record to DynamoDB"""
     table = dynamodb.Table('MedicalRecords')
     try:
+        record_id = str(uuid.uuid4())
         table.put_item(
             Item={
-                'record_id': str(uuid.uuid4()),
+                'record_id': record_id,
                 'username': username,
-                'record_type': record_type,
-                'description': description,
-                'timestamp': datetime.now().isoformat()
+                **record_data,
+                'created_at': datetime.now().isoformat()
             }
         )
         return True
     except Exception as e:
-        st.error(f"Error saving medical record: {str(e)}")
+        st.error(f"Error saving record: {str(e)}")
         return False
 
 def get_user_details(username):
-    """Fetch user details from DynamoDB."""
+    """Get user details from DynamoDB"""
     table = dynamodb.Table('UserDetails')
     try:
         response = table.get_item(Key={'username': username})
-        return response.get('Item', None)
+        return response.get('Item')
     except Exception as e:
         st.error(f"Error fetching user details: {str(e)}")
         return None
 
 def get_medical_records(username):
-    """Fetch user's medical records from DynamoDB."""
+    """Get user's medical records from DynamoDB"""
     table = dynamodb.Table('MedicalRecords')
     try:
         response = table.query(
@@ -114,127 +165,189 @@ def get_medical_records(username):
         )
         return response.get('Items', [])
     except Exception as e:
-        st.error(f"Error fetching medical records: {str(e)}")
+        st.error(f"Error fetching records: {str(e)}")
         return []
 
-def show_dashboard(username):
-    """Display user dashboard with medical information"""
-    st.sidebar.button("Logout", on_click=lambda: setattr(st.session_state, 'authenticated', False))
+def login_page():
+    """Display login page"""
+    st.title("🏥 MedTech Pro")
     
-    user_details = get_user_details(username)
-    if user_details:
-        st.header(f"Welcome, {user_details['full_name']}!")
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login")
         
-        with st.expander("Personal Information", expanded=True):
-            st.write("**Email:**", user_details['email'])
-            st.write("**Phone:**", user_details['phone'])
-            st.write("**Date of Birth:**", user_details['date_of_birth'])
-            st.write("**Address:**", user_details['address'])
-            st.write("**Emergency Contact:**", user_details['emergency_contact'])
-        
-        st.subheader("Medical Records")
-        
-        with st.expander("Add New Medical Record"):
-            record_type = st.selectbox("Record Type", 
-                ["Consultation", "Prescription", "Lab Test", "Vaccination", "Surgery", "Other"])
-            description = st.text_area("Description")
-            if st.button("Save Record"):
-                if save_medical_record(username, record_type, description):
-                    st.success("Medical record saved successfully!")
+        if submitted:
+            if username and password:
+                token = authenticate_user(username, password)
+                if token == 'UserNotConfirmed':
+                    st.warning("Please verify your email first.")
+                    verification_code = st.text_input("Verification Code")
+                    if st.button("Verify Email"):
+                        if verify_user(username, verification_code):
+                            st.success("Email verified! Please login again.")
+                            time.sleep(2)
+                            st.experimental_rerun()
+                elif token:
+                    st.session_state.token = token
+                    st.session_state.username = username
+                    st.session_state.authenticated = True
+                    st.success("Login successful!")
+                    time.sleep(1)
                     st.experimental_rerun()
+                else:
+                    st.error("Invalid credentials")
+            else:
+                st.error("Please fill in all fields")
+
+def registration_page():
+    """Display registration page"""
+    st.title("🏥 Create Account")
+    
+    with st.form("registration_form"):
+        col1, col2 = st.columns(2)
         
-        records = get_medical_records(username)
-        if records:
-            for record in records:
-                with st.expander(f"{record['record_type']} - {record['timestamp'][:10]}"):
-                    st.write("**Type:**", record['record_type'])
-                    st.write("**Description:**", record['description'])
-                    st.write("**Date:**", record['timestamp'])
-        else:
-            st.info("No medical records found.")
-
-def main():
-    st.set_page_config(page_title="MedTech App", page_icon="🩺", layout="centered")
-    st.title("MedTech Application")
-
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
-
-    menu = ["Login", "Register"]
-    choice = st.sidebar.radio("Menu", menu)
-
-    if choice == "Register":
-        st.subheader("Create a New Account")
-        with st.form("registration_form"):
-            new_username = st.text_input("Username*")
-            new_password = st.text_input("Password*", type='password')
-            new_email = st.text_input("Email*")
+        with col1:
+            username = st.text_input("Username*")
+            password = st.text_input("Password*", type="password")
+            email = st.text_input("Email*")
             full_name = st.text_input("Full Name*")
             phone = st.text_input("Phone Number*")
+            
+        with col2:
             dob = st.date_input("Date of Birth*")
+            blood_group = st.selectbox("Blood Group*", 
+                ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"])
             address = st.text_area("Address*")
-            emergency_contact = st.text_input("Emergency Contact Number*")
-            medical_conditions = st.text_area("Existing Medical Conditions (if any)")
-            
-            submit_button = st.form_submit_button("Register")
-            
-            if submit_button:
-                if all([new_username, new_password, new_email, full_name, phone, address, emergency_contact]):
-                    user_details = {
-                        'full_name': full_name,
-                        'phone': phone,
-                        'dob': dob.isoformat(),
-                        'address': address,
-                        'emergency_contact': emergency_contact,
-                        'medical_conditions': medical_conditions
-                    }
-                    
-                    if register_user(new_username, new_password, new_email, user_details):
-                        st.success("Registration successful! Please verify your email to complete registration.")
-                        verification_code = st.text_input("Enter verification code:")
-                        if st.button("Verify Email"):
-                            try:
-                                cognito_client.confirm_sign_up(
-                                    ClientId=CLIENT_ID,
-                                    Username=new_username,
-                                    ConfirmationCode=verification_code
-                                )
-                                st.success("Email verified successfully! You can now login.")
-                            except Exception as e:
-                                st.error("Verification failed. Please try again.")
-                else:
-                    st.error("Please fill in all required fields.")
-
-    elif choice == "Login":
-        st.subheader("Login to Your Account")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type='password')
-
-        if st.button("Login"):
-            token = authenticate_user(username, password)
-            if token == 'UserNotConfirmed':
-                st.warning("Please verify your email first.")
-                verification_code = st.text_input("Enter verification code:")
-                if st.button("Verify Email"):
-                    try:
-                        cognito_client.confirm_sign_up(
-                            ClientId=CLIENT_ID,
-                            Username=username,
-                            ConfirmationCode=verification_code
-                        )
-                        st.success("Email verified successfully! You can now login.")
-                    except Exception as e:
-                        st.error("Verification failed. Please try again.")
-            elif token:
-                st.session_state.authenticated = True
-                st.session_state.username = username
-                st.success("Login successful!")
-                st.experimental_rerun()
+            emergency_contact = st.text_input("Emergency Contact*")
+        
+        medical_conditions = st.text_area("Existing Medical Conditions")
+        
+        submitted = st.form_submit_button("Register")
+        
+        if submitted:
+            if all([username, password, email, full_name, phone, address, emergency_contact]):
+                user_details = {
+                    'full_name': full_name,
+                    'phone': phone,
+                    'dob': dob.isoformat(),
+                    'blood_group': blood_group,
+                    'address': address,
+                    'emergency_contact': emergency_contact,
+                    'medical_conditions': medical_conditions
+                }
+                
+                if register_user(username, password, email, user_details):
+                    st.success("Registration successful! Please check your email for verification code.")
+                    verification_code = st.text_input("Enter verification code")
+                    if st.button("Verify Email"):
+                        if verify_user(username, verification_code):
+                            st.success("Email verified! You can now login.")
+                            time.sleep(2)
+                            st.session_state.page = "login"
+                            st.experimental_rerun()
             else:
-                st.error("Invalid username or password.")
+                st.error("Please fill in all required fields")
 
+def dashboard_page():
+    """Display user dashboard"""
+    user_details = get_user_details(st.session_state.username)
+    
+    if user_details:
+        st.title(f"Welcome, {user_details['full_name']}!")
+        
+        # Navigation
+        tabs = st.tabs(["Profile", "Medical Records", "New Record"])
+        
+        # Profile Tab
+        with tabs[0]:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Personal Information")
+                st.write(f"**Email:** {user_details['email']}")
+                st.write(f"**Phone:** {user_details['phone']}")
+                st.write(f"**DOB:** {user_details['date_of_birth']}")
+                st.write(f"**Blood Group:** {user_details['blood_group']}")
+            
+            with col2:
+                st.subheader("Emergency Information")
+                st.write(f"**Address:** {user_details['address']}")
+                st.write(f"**Emergency Contact:** {user_details['emergency_contact']}")
+                if user_details.get('medical_conditions'):
+                    st.write("**Medical Conditions:**")
+                    st.write(user_details['medical_conditions'])
+        
+        # Medical Records Tab
+        with tabs[1]:
+            st.subheader("Medical History")
+            records = get_medical_records(st.session_state.username)
+            
+            if records:
+                for record in records:
+                    with st.expander(f"{record['record_type']} - {record['created_at'][:10]}"):
+                        st.write(f"**Type:** {record['record_type']}")
+                        st.write(f"**Description:** {record['description']}")
+                        if record.get('attachments'):
+                            st.write("**Attachments:** Available")
+            else:
+                st.info("No medical records found")
+        
+        # New Record Tab
+        with tabs[2]:
+            st.subheader("Add Medical Record")
+            with st.form("new_record_form"):
+                record_type = st.selectbox("Record Type*", 
+                    ["Consultation", "Prescription", "Lab Test", "Vaccination", 
+                     "Surgery", "Allergies", "Other"])
+                description = st.text_area("Description*")
+                
+                submitted = st.form_submit_button("Save Record")
+                if submitted:
+                    if description:
+                        record_data = {
+                            'record_type': record_type,
+                            'description': description
+                        }
+                        if save_medical_record(st.session_state.username, record_data):
+                            st.success("Record saved successfully!")
+                            time.sleep(1)
+                            st.experimental_rerun()
+                    else:
+                        st.error("Please fill in all required fields")
+
+def main():
+    """Main application logic"""
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    
+    if 'page' not in st.session_state:
+        st.session_state.page = 'login'
+    
+    # Logout button in header
     if st.session_state.authenticated:
-        show_dashboard(st.session_state.username)
+        if st.button("Logout", key="logout"):
+            st.session_state.clear()
+            st.experimental_rerun()
+    
+    # Navigation
+    if not st.session_state.authenticated:
+        col1, col2 = st.columns([6,1])
+        with col2:
+            if st.session_state.page == 'login':
+                if st.button("Register"):
+                    st.session_state.page = 'registration'
+                    st.experimental_rerun()
+            else:
+                if st.button("Login"):
+                    st.session_state.page = 'login'
+                    st.experimental_rerun()
+        
+        if st.session_state.page == 'login':
+            login_page()
+        else:
+            registration_page()
+    else:
+        dashboard_page()
 
 if __name__ == "__main__":
     main()
