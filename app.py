@@ -187,14 +187,16 @@ def login_page():
                         if verify_user(username, verification_code):
                             st.success("Email verified! Please login again.")
                             time.sleep(2)
-                            st.experimental_rerun()
+                            st.session_state.page = 'login'  # Update page to login after verification
+                            st.session_state.clear()  # Clear session state to reset app
                 elif token:
                     st.session_state.token = token
                     st.session_state.username = username
                     st.session_state.authenticated = True
                     st.success("Login successful!")
                     time.sleep(1)
-                    st.experimental_rerun()
+                    st.session_state.page = "dashboard"  # Redirect to dashboard after successful login
+                    st.session_state.clear()  # Clear session state to reset app
                 else:
                     st.error("Invalid credentials")
             else:
@@ -244,8 +246,8 @@ def registration_page():
                         if verify_user(username, verification_code):
                             st.success("Email verified! You can now login.")
                             time.sleep(2)
-                            st.session_state.page = "login"
-                            st.experimental_rerun()
+                            st.session_state.page = "login"  # Update page to login after registration
+                            st.session_state.clear()  # Clear session state to reset app
             else:
                 st.error("Please fill in all required fields")
 
@@ -254,99 +256,28 @@ def dashboard_page():
     user_details = get_user_details(st.session_state.username)
     
     if user_details:
-        st.title(f"Welcome, {user_details['full_name']}!")
+        st.title(f"Welcome, {user_details['full_name']}")
+        st.subheader("Your Medical Records")
+        records = get_medical_records(st.session_state.username)
         
-        # Navigation
-        tabs = st.tabs(["Profile", "Medical Records", "New Record"])
-        
-        # Profile Tab
-        with tabs[0]:
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("Personal Information")
-                st.write(f"**Email:** {user_details['email']}")
-                st.write(f"**Phone:** {user_details['phone']}")
-                st.write(f"**DOB:** {user_details['date_of_birth']}")
-                st.write(f"**Blood Group:** {user_details['blood_group']}")
-            
-            with col2:
-                st.subheader("Emergency Information")
-                st.write(f"**Address:** {user_details['address']}")
-                st.write(f"**Emergency Contact:** {user_details['emergency_contact']}")
-                if user_details.get('medical_conditions'):
-                    st.write("**Medical Conditions:**")
-                    st.write(user_details['medical_conditions'])
-        
-        # Medical Records Tab
-        with tabs[1]:
-            st.subheader("Medical History")
-            records = get_medical_records(st.session_state.username)
-            
-            if records:
-                for record in records:
-                    with st.expander(f"{record['record_type']} - {record['created_at'][:10]}"):
-                        st.write(f"**Type:** {record['record_type']}")
-                        st.write(f"**Description:** {record['description']}")
-                        if record.get('attachments'):
-                            st.write("**Attachments:** Available")
-            else:
-                st.info("No medical records found")
-        
-        # New Record Tab
-        with tabs[2]:
-            st.subheader("Add Medical Record")
-            with st.form("new_record_form"):
-                record_type = st.selectbox("Record Type*", 
-                    ["Consultation", "Prescription", "Lab Test", "Vaccination", 
-                     "Surgery", "Allergies", "Other"])
-                description = st.text_area("Description*")
-                
-                submitted = st.form_submit_button("Save Record")
-                if submitted:
-                    if description:
-                        record_data = {
-                            'record_type': record_type,
-                            'description': description
-                        }
-                        if save_medical_record(st.session_state.username, record_data):
-                            st.success("Record saved successfully!")
-                            time.sleep(1)
-                            st.experimental_rerun()
-                    else:
-                        st.error("Please fill in all required fields")
+        for record in records:
+            st.write(record)
+
+        # Option to log out
+        if st.button("Log Out"):
+            st.session_state.clear()  # Clear session state to reset app
+            st.session_state.page = "login"  # Redirect to login page
 
 def main():
-    """Main application logic"""
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
-    
+    """Main function for app flow"""
     if 'page' not in st.session_state:
         st.session_state.page = 'login'
     
-    # Logout button in header
-    if st.session_state.authenticated:
-        if st.button("Logout", key="logout"):
-            st.session_state.clear()
-            st.experimental_rerun()
-    
-    # Navigation
-    if not st.session_state.authenticated:
-        col1, col2 = st.columns([6,1])
-        with col2:
-            if st.session_state.page == 'login':
-                if st.button("Register"):
-                    st.session_state.page = 'registration'
-                    st.experimental_rerun()
-            else:
-                if st.button("Login"):
-                    st.session_state.page = 'login'
-                    st.experimental_rerun()
-        
-        if st.session_state.page == 'login':
-            login_page()
-        else:
-            registration_page()
-    else:
+    if st.session_state.page == "login":
+        login_page()
+    elif st.session_state.page == "registration":
+        registration_page()
+    elif st.session_state.page == "dashboard":
         dashboard_page()
 
 if __name__ == "__main__":
