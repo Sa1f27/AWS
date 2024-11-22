@@ -4,6 +4,9 @@ import boto3
 from datetime import datetime
 import uuid
 import time
+import hmac
+import hashlib
+import base64
 
 # Use environment variables for AWS configuration
 AWS_REGION = st.secrets["AWS_REGION"]
@@ -62,6 +65,18 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+def generate_secret_hash(username, client_id, client_secret):
+    """
+    Generate SECRET_HASH using HMACSHA256(username + client_id, client_secret)
+    """
+    message = username + client_id
+    secret_hash = hmac.new(
+        key=bytes(client_secret, 'utf-8'),
+        msg=bytes(message, 'utf-8'),
+        digestmod=hashlib.sha256
+    ).digest()
+    return base64.b64encode(secret_hash).decode('utf-8')
+    
 def authenticate_user(username, password):
     """Authenticate user with Cognito"""
     try:
@@ -83,11 +98,14 @@ def authenticate_user(username, password):
 def register_user(username, password, email, user_details):
     """Register new user in Cognito and DynamoDB"""
     try:
+        secret_hash = generate_secret_hash(username, CLIENT_ID, st.secrets["CLIENT_SECRET"])  # Generate SECRET_HASH
+
         # Register in Cognito
         cognito_client.sign_up(
             ClientId=CLIENT_ID,
             Username=username,
             Password=password,
+            SecretHash=secret_hash,  # Add SECRET_HASH
             UserAttributes=[
                 {'Name': 'email', 'Value': email}
             ]
