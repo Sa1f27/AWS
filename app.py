@@ -5,14 +5,14 @@ from datetime import datetime
 import uuid
 import time
 
-# AWS Configuration
-AWS_REGION = "YOUR_REGION"  # e.g., "us-east-1"
-USER_POOL_ID = "YOUR_USER_POOL_ID"
-CLIENT_ID = "YOUR_CLIENT_ID"
-AWS_ACCESS_KEY = "YOUR_ACCESS_KEY"
-AWS_SECRET_KEY = "YOUR_SECRET_KEY"
+# Use environment variables for AWS configuration
+AWS_REGION = st.secrets["AWS_REGION"]
+USER_POOL_ID = st.secrets["USER_POOL_ID"]
+CLIENT_ID = st.secrets["CLIENT_ID"]
+AWS_ACCESS_KEY = st.secrets["AWS_ACCESS_KEY"]
+AWS_SECRET_KEY = st.secrets["AWS_SECRET_KEY"]
 
-# Initialize AWS clients
+# Initialize Boto3 clients using these variables
 cognito_client = boto3.client(
     'cognito-idp',
     region_name=AWS_REGION,
