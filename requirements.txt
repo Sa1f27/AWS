@@ -1,3 +1,11 @@
 streamlit
 boto3
 python-jose
+
+
+streamlit
+pandas
+numpy
+plotly
+Pillow
+boto3
