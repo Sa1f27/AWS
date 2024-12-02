@@ -1,9 +1,6 @@
-
-# 🏥 MedTech Pro - Healthcare Management Platform
-
 ## Overview
 
-MedTech Pro is a healthcare management web application built using **Streamlit**, **AWS Cognito**, and **AWS DynamoDB**. The app enables user registration, authentication, and management of medical records with a user-friendly interface. It leverages **AWS services** to ensure secure and scalable data handling.
+This management web application built using **Streamlit**, **AWS Cognito**, and **AWS DynamoDB**. The app enables user registration, authentication, and management of medical records with a user-friendly interface. It leverages **AWS services** to ensure secure and scalable data handling.
 
 ## Features
 
@@ -103,7 +100,7 @@ The application will be available at `http://localhost:8501`.
 ## Directory Structure
 
 ```
-medtech-pro/
+aws/
 ├── app.py                  # Main application file
 ├── requirements.txt        # Python dependencies
 ├── .streamlit/
@@ -127,8 +124,8 @@ medtech-pro/
 
 ### **Dashboard**
 1. Users can view and update their **Profile** information.
-2. **Medical Records** tab to view the medical history.
-3. **Add New Record** tab to input new medical records.
+2. **Records** tab to view the Dashboard.
+3. **Add New Record** tab to input new records.
 
 ## Troubleshooting
 
